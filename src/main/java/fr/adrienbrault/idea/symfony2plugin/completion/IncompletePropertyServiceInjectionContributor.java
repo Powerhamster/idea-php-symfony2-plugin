@@ -240,6 +240,48 @@ public class IncompletePropertyServiceInjectionContributor extends CompletionCon
         }};
     }
 
+    public static List<String> getInjectionService(@NotNull Project project, @NotNull String propertyNameFind) {
+        // @TODO: fill this list based on project usage
+
+        List<String> servicesMatch = new ArrayList<>();
+
+        for (Triple<String, String[], String[]> injection : getInjectionService(project)) {
+            for (String fqn : injection.getSecond()) {
+                String propertyName = injection.getFirst();
+                if (propertyName == null) {
+                    int i = fqn.lastIndexOf("\\");
+                    if (i > 0) {
+                        propertyName = fqn.substring(i + 1);
+                    } else {
+                        propertyName = fqn;
+                    }
+
+                    propertyName = StringUtils.removeEndIgnoreCase(propertyName, "interface");
+                    propertyName = StringUtils.removeEndIgnoreCase(propertyName, "abstract");
+                    propertyName = StringUtils.removeEndIgnoreCase(propertyName, "factory");
+
+                    // propertyName = fr.adrienbrault.idea.symfony2plugin.util.StringUtils.camelize(propertyName);
+                    propertyName = propertyName.substring(0, 1).toLowerCase() + propertyName.substring(1);
+                }
+
+                if (StringUtils.isBlank(propertyName) || !propertyName.toLowerCase().startsWith(propertyNameFind.toLowerCase())) {
+                    continue;
+                }
+
+                Collection<PhpClass> anyByFQN = PhpIndex.getInstance(project).getAnyByFQN(fqn);
+                if (anyByFQN.size() == 0) {
+                    continue;
+                }
+
+                servicesMatch.add(fqn);
+
+                break;
+            }
+        }
+
+        return servicesMatch;
+    }
+
     @Nullable
     private String getCompletedText(@NotNull CompletionParameters completionParameters) {
         PsiElement originalPosition = completionParameters.getOriginalPosition();
@@ -305,6 +347,35 @@ public class IncompletePropertyServiceInjectionContributor extends CompletionCon
             if (lookupString.endsWith(");")) {
                 context.getEditor().getCaretModel().moveCaretRelatively(-2, 0, false, false, true);
             }
+        }
+    }
+
+    public static void buildInject(@NotNull PhpClass parentOfType, @NotNull String propertyName, @NotNull String typePhpClass) {
+        Method constructor = PhpIntroduceFieldHandler.getOrCreateConstructor(parentOfType);
+        if (constructor == null) {
+            return;
+        }
+
+        // use + constructor(Foo $foo)
+        String importedClass = PhpElementsUtil.insertUseIfNecessary(parentOfType, typePhpClass);
+        PhpParameterInfo phpParameterInfo = new PhpParameterInfo(0, propertyName);
+        phpParameterInfo.setType(new PhpType().add(typePhpClass), importedClass);
+
+        // find added parameter; should mostly the last
+        Collection<PhpParameterInfo> parameterInfos = List.of(phpParameterInfo);
+        PhpChangeSignatureProcessor.addParameterToFunctionSignature(parentOfType.getProject(), constructor, parameterInfos);
+
+        
+
+        Parameter parameter = Arrays.stream(constructor.getParameters())
+            .filter(parameter1 -> propertyName.equalsIgnoreCase(parameter1.getName()))
+            .findFirst()
+            .orElse(null);
+
+        // add $this->foo
+        // readonly, constructor property promotion currently not supported; or handled automatically by code
+        if (parameter != null) {
+            PhpRefactoringUtil.initializeFieldsByParameters(parentOfType, List.of(parameter), PhpModifier.Access.PRIVATE);
         }
     }
 }
